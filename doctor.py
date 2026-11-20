@@ -130,7 +130,7 @@ def check_dev_debuginfo(facts: ProjectFacts) -> Finding:
     # Sem override de pacote, as dependências herdam o debug do [profile.dev].
     deps_debug = profile.get("package", {}).get("*", {}).get("debug", debug)
     fix = '`[profile.dev] debug = "line-tables-only"` e `[profile.dev.package."*"] debug = false`'
-    evidence = "Cargo book (profiles); não medido no lab"
+    evidence = "lab: no Sussurro, mudar uma linha caiu de 5,4 s para 1,7 s e a RAM de 1,2 para 0,5 GiB"
     if debug in (True, 2, "full"):
         return Finding("dev-debuginfo", "melhorar", "build de dev gera debuginfo completo", fix, evidence)
     if deps_debug not in NO_DEBUGINFO:
