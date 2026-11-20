@@ -37,5 +37,15 @@ v_gen() {
 v_edit_file() { echo "$1/m0.v"; }
 v_bin() { echo "$1/bin"; }
 v_clean() { rm -f "$1/bin"; }
-v_build() { (cd "$1" && v -o bin .); }
+# O pacote vlang-bin do AUR vem sem o tcc embutido, e o libgc.a dele (feito com gcc) dá
+# "section type conflict" no tcc do sistema; sem isso o V cai no gcc em silêncio.
+# -gc none é neutro aqui: o programa não aloca.
+v_build() {
+  local err
+  err=$(cd "$1" && v -cc tcc -gc none -o bin . 2>&1) || { echo "$err" >&2; return 1; }
+  if grep -q 'falling back' <<< "$err"; then
+    echo "v: o tcc falhou e o V usou outro compilador: $err" >&2
+    return 1
+  fi
+}
 v_version() { v version; }

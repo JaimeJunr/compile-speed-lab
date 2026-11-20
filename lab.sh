@@ -105,19 +105,30 @@ cmd_run() {
   echo "resultados em ${out#"$LAB"/}"
 }
 
+# Mediana de um campo das medições do hyperfine 2 (o JSON dele não traz mais a mediana pronta).
+median_of() {
+  jq -r --arg k "$2" '[.results[0].measurements[][$k].value] | sort
+    | if length == 0 then "-" else .[(length / 2 | floor)] end' "$1"
+}
+
+# Instruções de CPU variam bem menos que o tempo de relógio numa máquina com outras cargas.
 cmd_report() {
-  local dir=${1:?pasta de resultado} v s med
+  local dir=${1:?pasta de resultado} v s f
   [ -d "$dir" ] || dir="$LAB/results/$dir"
-  echo "| variante | build limpo (s) | sem mudança (s) | mudou 1 linha (s) |"
-  echo "|---|---:|---:|---:|"
+  echo "| variante | limpo (s) | sem mudança (s) | mudou 1 linha (s) | RAM pico, limpo (MiB) | instruções, limpo (bi) |"
+  echo "|---|---:|---:|---:|---:|---:|"
   for v in "${ALL_VARIANTS[@]}"; do
-    [ -f "$dir/$v-clean.json" ] || continue
-    printf '| %s ' "$v"
+    # Variante ainda rodando deixa o JSON pela metade: pula até ele ficar válido.
+    jq -e . "$dir/$v-incr.json" >/dev/null 2>&1 || continue
+    printf '| %s' "$v"
     for s in clean noop incr; do
-      med=$(jq -r '.results[0].median' "$dir/$v-$s.json" 2>/dev/null || echo "-")
-      printf '| %.3f ' "$med"
+      f=$(median_of "$dir/$v-$s.json" time_wall_clock)
+      LC_NUMERIC=C printf ' | %.2f' "$f"
     done
-    echo '|'
+    f=$(median_of "$dir/$v-clean.json" memory_peak_resident)
+    LC_NUMERIC=C printf ' | %.0f' "$(echo "$f / 1048576" | bc -l)"
+    f=$(median_of "$dir/$v-clean.json" instructions)
+    LC_NUMERIC=C printf ' | %.1f |\n' "$(echo "$f / 1000000000" | bc -l)"
   done
 }
 
