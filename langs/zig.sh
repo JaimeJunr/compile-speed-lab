@@ -32,8 +32,6 @@ zig_gen() {
   done
 }
 
-zig_edit_file() { echo "$1/m0.zig"; }
-zig_bin() { echo "$1/bin"; }
 
 # O cache global guarda a stdlib e o compiler_rt; ele fica (como a stdlib pronta do Rust).
 # O cache local do projeto é o que o build limpo apaga.

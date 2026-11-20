@@ -3,8 +3,10 @@
 # build limpo, rebuild sem mudança (noop) e rebuild depois de mudar uma linha (incr).
 #
 #   ./lab.sh gen <módulos> <funções-por-módulo>   gera work/<M>x<F>/<linguagem>
-#   ./lab.sh verify <M>x<F>                       compila tudo e confere que todos imprimem o mesmo número
-#   ./lab.sh run <M>x<F> [variante...]            mede com hyperfine e grava em results/
+#   ./lab.sh gen-multi <unidades> <funções>       gera work/multi-<M>x<F>: uma unidade de compilação
+#                                                 por módulo, todas dependendo da base m0
+#   ./lab.sh verify <tamanho>                     compila tudo e confere que todos imprimem o mesmo número
+#   ./lab.sh run <tamanho> [variante...]          mede com hyperfine e grava em results/
 #   ./lab.sh report <pasta-de-resultado>          tabela em Markdown
 #   ./lab.sh variants                             lista as variantes disponíveis nesta máquina
 set -euo pipefail
@@ -47,12 +49,31 @@ cmd_gen() {
   echo "gerado: work/${m}x$f ($((m * f)) funções por linguagem)"
 }
 
-# Muda o número da linha marcada com "// EDIT": mudança de corpo de função, sem mexer em interface.
-cmd_edit() {
-  local file
-  file=$("$(lang_of "$2")_edit_file" "$1")
-  sed -i -E "s/[0-9]+(\)?;? *\/\/ EDIT)/$((RANDOM + 1))\1/" "$file"
+cmd_gen_multi() {
+  local m=${1:?unidades} f=${2:?funções} l
+  ((m >= 2)) || die "gen-multi precisa de pelo menos 2 unidades, recebeu $m"
+  for l in "${MULTI_LANGS[@]}"; do
+    rm -rf "$LAB/work/multi-${m}x$f/$l"
+    "${l}_gen_multi" "$LAB/work/multi-${m}x$f/$l" "$m" "$f"
+  done
+  echo "gerado: work/multi-${m}x$f ($m unidades, $((m * f)) funções por linguagem)"
 }
+
+# Muda o número da linha marcada: mudança de corpo de função, sem mexer em interface.
+# Alvo "base" é a linha "// EDIT"; "leaf" é "// EDIT-LEAF" (só no cenário multi).
+cmd_edit() {
+  local marker files
+  case ${3:-base} in
+    base) marker='// EDIT' ;; leaf) marker='// EDIT-LEAF' ;;
+    *) die "alvo de edição inválido: recebeu '$3', esperado base ou leaf" ;;
+  esac
+  files=$(grep -rlE --exclude-dir={target,gocache,gocache-std,units,zig-cache} "$marker\$" "$1")
+  [ -n "$files" ] || die "nenhum arquivo com '$marker' em $1"
+  # shellcheck disable=SC2086 # lista de arquivos sem espaço, gerada pelo próprio lab
+  sed -i -E "s#[0-9]+(\)?;? *$marker)\$#$((RANDOM + 1))\1#" $files
+}
+
+has_leaf() { grep -rqE --exclude-dir={target,gocache,gocache-std,units} '// EDIT-LEAF$' "$1"; }
 
 cmd_build() { "$(lang_of "$2")_build" "$1" "$2"; }
 cmd_clean() { "$(lang_of "$2")_clean" "$1" "$2"; }
@@ -67,6 +88,7 @@ cmd_verify() {
     [[ $v == rust-check ]] && continue
     available "$v" || { echo "pulando $v (ferramenta ausente)"; continue; }
     d=$(workdir "$size" "$v")
+    [ -d "$d" ] || continue # o cenário multi não gera todas as linguagens
     cmd_clean "$d" "$v" && cmd_build "$d" "$v" >/dev/null
     out=$(run_bin "$d" "$v")
     printf '%-22s %s\n' "$v" "$out"
@@ -94,13 +116,17 @@ cmd_run() {
   for v in "${variants[@]}"; do
     available "$v" || { echo "pulando $v (ferramenta ausente)"; continue; }
     d=$(workdir "$size" "$v")
+    [ -d "$d" ] || continue
     echo "== $v: $(version_of "$v")" | tee -a "$out/versions.txt"
     hyperfine -N --style basic --runs "${RUNS_CLEAN:-5}" \
       --prepare "$self _clean $d $v" --export-json "$out/$v-clean.json" "$self _build $d $v"
     hyperfine -N --style basic --warmup 1 --runs "${RUNS_INCR:-10}" \
       --export-json "$out/$v-noop.json" "$self _build $d $v"
     hyperfine -N --style basic --warmup 1 --runs "${RUNS_INCR:-10}" \
-      --prepare "$self _edit $d $v" --export-json "$out/$v-incr.json" "$self _build $d $v"
+      --prepare "$self _edit $d $v base" --export-json "$out/$v-incr.json" "$self _build $d $v"
+    has_leaf "$d" || continue
+    hyperfine -N --style basic --warmup 1 --runs "${RUNS_INCR:-10}" \
+      --prepare "$self _edit $d $v leaf" --export-json "$out/$v-leaf.json" "$self _build $d $v"
   done
   echo "resultados em ${out#"$LAB"/}"
 }
@@ -111,19 +137,27 @@ median_of() {
     | if length == 0 then "-" else .[(length / 2 | floor)] end' "$1"
 }
 
-# Instruções de CPU variam bem menos que o tempo de relógio numa máquina com outras cargas.
+# Instruções de CPU variam bem menos que o tempo de relógio numa máquina com outras cargas:
+# METRIC=instructions troca as colunas de cenário de segundos para bilhões de instruções.
 cmd_report() {
-  local dir=${1:?pasta de resultado} v s f
+  local dir=${1:?pasta de resultado} v s f scenarios=(clean noop incr) leaf_col="" incr_col="mudou 1 linha"
+  local key=time_wall_clock unit=s div=1
+  if [ "${METRIC:-time}" = instructions ]; then key=instructions unit=bi div=1000000000; fi
   [ -d "$dir" ] || dir="$LAB/results/$dir"
-  echo "| variante | limpo (s) | sem mudança (s) | mudou 1 linha (s) | RAM pico, limpo (MiB) | instruções, limpo (bi) |"
-  echo "|---|---:|---:|---:|---:|---:|"
+  if compgen -G "$dir/*-leaf.json" >/dev/null; then
+    scenarios+=(leaf)
+    leaf_col=" mudou a folha ($unit) |"
+    incr_col="mudou a base"
+  fi
+  echo "| variante | limpo ($unit) | sem mudança ($unit) | $incr_col ($unit) |$leaf_col RAM pico, limpo (MiB) | instruções, limpo (bi) |"
+  echo "|---|---:|---:|---:|${leaf_col:+---:|}---:|---:|"
   for v in "${ALL_VARIANTS[@]}"; do
     # Variante ainda rodando deixa o JSON pela metade: pula até ele ficar válido.
     jq -e . "$dir/$v-incr.json" >/dev/null 2>&1 || continue
     printf '| %s' "$v"
-    for s in clean noop incr; do
-      f=$(median_of "$dir/$v-$s.json" time_wall_clock)
-      LC_NUMERIC=C printf ' | %.2f' "$f"
+    for s in "${scenarios[@]}"; do
+      f=$(median_of "$dir/$v-$s.json" "$key")
+      LC_NUMERIC=C printf ' | %.2f' "$(echo "$f / $div" | bc -l)"
     done
     f=$(median_of "$dir/$v-clean.json" memory_peak_resident)
     LC_NUMERIC=C printf ' | %.0f' "$(echo "$f / 1048576" | bc -l)"
@@ -134,12 +168,13 @@ cmd_report() {
 
 case ${1:-} in
   gen) shift; cmd_gen "$@" ;;
+  gen-multi) shift; cmd_gen_multi "$@" ;;
   verify) shift; cmd_verify "$@" ;;
   run) shift; cmd_run "$@" ;;
   report) shift; cmd_report "$@" ;;
   variants) for v in "${ALL_VARIANTS[@]}"; do available "$v" && echo "$v" || echo "$v (ausente)"; done ;;
   _build) cmd_build "$2" "$3" ;;
   _clean) cmd_clean "$2" "$3" ;;
-  _edit) cmd_edit "$2" "$3" ;;
-  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  _edit) cmd_edit "$2" "$3" "${4:-base}" ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

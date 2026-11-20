@@ -31,8 +31,6 @@ rust_gen() {
   done
 }
 
-rust_edit_file() { echo "$1/src/m0.rs"; }
-rust_bin() { echo "$1/target/debug/bench"; }
 rust_clean() { rm -rf "$1/target"; }
 
 # Variantes: LLVM ou Cranelift, linker padrão (lld) ou wild, build ou só check.

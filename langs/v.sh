@@ -34,8 +34,6 @@ v_gen() {
   done
 }
 
-v_edit_file() { echo "$1/m0.v"; }
-v_bin() { echo "$1/bin"; }
 v_clean() { rm -f "$1/bin"; }
 # O pacote vlang-bin do AUR vem sem o tcc embutido, e o libgc.a dele (feito com gcc) dá
 # "section type conflict" no tcc do sistema; sem isso o V cai no gcc em silêncio.

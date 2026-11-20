@@ -33,8 +33,6 @@ odin_gen() {
   done
 }
 
-odin_edit_file() { echo "$1/m0.odin"; }
-odin_bin() { echo "$1/bin"; }
 odin_clean() { rm -f "$1/bin" "$1"/bin.o; }
 odin_build() { (cd "$1" && odin build . -out:bin -o:none); }
 odin_version() { odin version; }

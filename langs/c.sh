@@ -49,8 +49,6 @@ bin: $(OBJS)
 EOF
 }
 
-c_edit_file() { echo "$1/m0.c"; }
-c_bin() { echo "$1/bin"; }
 c_clean() { rm -f "$1"/*.o "$1/bin"; }
 c_cc() { echo "${1#c-}"; }
 

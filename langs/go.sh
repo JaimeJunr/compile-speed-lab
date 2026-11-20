@@ -36,9 +36,6 @@ go_gen() {
   done
 }
 
-go_edit_file() { echo "$1/m0.go"; }
-go_bin() { echo "$1/bin"; }
-
 # O GOCACHE guarda também a stdlib compilada. Para o build limpo valer o mesmo que no Rust
 # (stdlib já pronta), o cache do projeto recomeça de uma cópia com só a stdlib.
 go_clean() {
