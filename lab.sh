@@ -61,16 +61,18 @@ cmd_gen_multi() {
 
 # Muda o número da linha marcada: mudança de corpo de função, sem mexer em interface.
 # Alvo "base" é a linha "// EDIT"; "leaf" é "// EDIT-LEAF" (só no cenário multi).
+# No cenário de crate único todo módulo tem o marcador: edita só o primeiro arquivo, senão
+# "mudou 1 linha" vira uma linha em cada um dos M arquivos (erro da primeira rodada).
 cmd_edit() {
-  local marker files
+  local marker file
   case ${3:-base} in
     base) marker='// EDIT' ;; leaf) marker='// EDIT-LEAF' ;;
     *) die "alvo de edição inválido: recebeu '$3', esperado base ou leaf" ;;
   esac
-  files=$(grep -rlE --exclude-dir={target,gocache,gocache-std,units,zig-cache} "$marker\$" "$1")
-  [ -n "$files" ] || die "nenhum arquivo com '$marker' em $1"
-  # shellcheck disable=SC2086 # lista de arquivos sem espaço, gerada pelo próprio lab
-  sed -i -E "s#[0-9]+(\)?;? *$marker)\$#$((RANDOM + 1))\1#" $files
+  file=$(grep -rlE --exclude-dir={target,gocache,gocache-std,units,zig-cache} "$marker\$" "$1" |
+    sort | head -1)
+  [ -n "$file" ] || die "nenhum arquivo com '$marker' em $1"
+  sed -i -E "s#[0-9]+(\)?;? *$marker)\$#$((RANDOM + 1))\1#" "$file"
 }
 
 has_leaf() { grep -rqE --exclude-dir={target,gocache,gocache-std,units} '// EDIT-LEAF$' "$1"; }

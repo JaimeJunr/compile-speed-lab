@@ -14,7 +14,7 @@ Para cada variante, com [hyperfine](https://github.com/sharkdp/hyperfine) (media
 |---|---|
 | `clean` | build do zero, com a biblioteca padrão já pronta |
 | `noop` | build sem nenhuma mudança (custo fixo da ferramenta) |
-| `incr` | mudar o corpo de uma função e compilar de novo (o ciclo do dia a dia) |
+| `incr` | mudar o corpo de uma função, num arquivo só, e compilar de novo (o ciclo do dia a dia) |
 
 ## Variantes
 
@@ -42,6 +42,7 @@ Jai ficou de fora: o compilador não é distribuído publicamente.
 ./lab.sh verify 50x200     # todas imprimem o mesmo número?
 ./lab.sh run 50x200        # mede tudo; ou: ./lab.sh run 50x200 go rust-llvm rust-cranelift
 ./lab.sh report 2026-11-20-<host>-50x200
+./tests/edit_test.sh       # a edição de "mudou 1 linha" mexe em um arquivo só?
 ```
 
 Rode numa máquina parada: outras cargas mudam os números. `RUNS_CLEAN` e `RUNS_INCR` ajustam quantas vezes cada cenário roda.
@@ -50,7 +51,9 @@ Rode numa máquina parada: outras cargas mudam os números. `RUNS_CLEAN` e `RUNS
 
 10 mil funções (`50x200`), notebook com 16 threads limitado a 4 núcleos pela fila de build, **com outras cargas rodando**: o tempo de relógio tem ruído alto (a variante `rust-llvm` foi de 2,6 s a 11,7 s no mesmo cenário). As instruções de CPU são o número mais estável. Dados brutos em [`results/2026-11-20-jaime-setup-50x200`](results/2026-11-20-jaime-setup-50x200).
 
-| variante | limpo (s) | sem mudança (s) | mudou 1 linha (s) | RAM pico, limpo (MiB) | instruções, limpo (bi) |
+**Erro desta rodada:** o `_edit` mudava a linha marcada em todos os 50 arquivos, não em um só. A coluna "mudou 50 linhas" mede isso: uma linha em cada arquivo. O `lab.sh` já edita um arquivo só, e a rodada precisa ser refeita.
+
+| variante | limpo (s) | sem mudança (s) | mudou 50 linhas, 1 por arquivo (s) | RAM pico, limpo (MiB) | instruções, limpo (bi) |
 |---|---:|---:|---:|---:|---:|
 | go | 6.42 | 0.07 | 5.35 | 424 | 33.0 |
 | rust-llvm | 5.74 | 0.10 | 6.18 | 436 | 21.1 |
@@ -70,7 +73,7 @@ Rode numa máquina parada: outras cargas mudam os números. `RUNS_CLEAN` e `RUNS
 O que esta rodada sugere (hipóteses, não conclusões):
 
 1. **O frontend do Rust é o piso.** Só o `cargo check`, sem gerar código, usa 10,8 bilhões de instruções e 2,6 s, mais que o `clang` compilando o mesmo programa inteiro em C (10,6 bi, 1,35 s). Em código sem genéricos, traits nem macros, a análise já custa metade do build. Trocar o backend (Cranelift) não passa desse piso.
-2. **Num crate único, o build incremental quase não poupa trabalho.** Mudar uma linha custa perto do `cargo check` inteiro (1,96 s), enquanto C e Pascal recompilam só o arquivo mudado (0,03 s a 0,23 s).
+2. ~~Num crate único, o build incremental quase não poupa trabalho.~~ Errada: a edição mexia nos 50 arquivos. Com um arquivo só, numa máquina parada, o incremental poupa 60% (ver "Onde vai o tempo do `cargo check`").
 3. **Num pacote único gigante, o Go não é mais rápido que o Rust.** O `go build` sempre otimiza; a vantagem dele deve aparecer com vários pacotes, que ainda não estão medidos.
 4. **O linker não decide este cenário.** O binário é pequeno e a diferença entre lld, mold e wild ficou dentro do ruído.
 
@@ -98,10 +101,46 @@ O que esta rodada sugere:
 3. **Isso dá um número para o ganho do Relink-Don't-Rebuild neste cenário.** Se o Rust só religasse os dependentes, a mudança na base deveria custar perto da mudança na folha (0,63 bilhão): cerca de 9 vezes menos que hoje. O roadmap oficial fala em 5 a 10 vezes.
 4. **Mesmo aqui, a maior parte é análise.** Na mudança da base, o `cargo check` sozinho gasta 4,5 dos 5,9 bilhões.
 
+## Onde vai o tempo do `cargo check` (2026-11-20)
+
+Cenário `50x200` (crate único, 10 mil funções), rustc 1.100.0. Dados brutos em [`results/2026-11-20-jaime-setup-check-profile`](results/2026-11-20-jaime-setup-check-profile) e [`results/2026-11-20-note2-incremental`](results/2026-11-20-note2-incremental).
+
+**Por fase** (`-Ztime-passes`, 2,34 s no total, numa máquina com outras cargas):
+
+| fase | s | % |
+|---|---:|---:|
+| `MIR_checking` (borrowck e as checagens feitas em cada função) | 0.72 | 31 |
+| `type_check_crate` (inferência e checagem de tipos) | 0.48 | 21 |
+| `expand_crate` (inclui ler e analisar os 50 arquivos de `mod mJ;`) | 0.35 | 15 |
+| `misc_checking_1` e `misc_checking_3` | 0.14 | 6 |
+| `coherence_checking` | 0.10 | 4 |
+| `resolve_crate` (resolução de nomes) | 0.09 | 4 |
+| `lint_checking` | 0.06 | 2 |
+| gravar o cache incremental | 0.04 | 2 |
+| resto (inicialização e fases pequenas) | 0.36 | 15 |
+
+**Por consulta** (`-Zself-profile`): o perfil infla o total para 10,3 s de CPU, então vale a proporção, não o tempo. As maiores são `typeck` (12%), `mir_built` (8%), a gravação do grafo de dependências do incremental (8%, 515 mil nós) e `mir_borrowck` (8%). Depois vem uma fila de checagens de 0,7% a 2% cada (`thir_body`, `check_unsafety`, `check_liveness`, `check_match`, `check_transmutes`, `opaque_types_defined_by`, `check_coroutine_obligations`, `has_ffi_unwind_calls`), todas chamadas 10.051 vezes: uma por função. O hashing dos resultados para o incremental soma 1,8 s dos 10,3 s, cerca de 3 µs por consulta por função.
+
+**Com e sem incremental** (note2 parada, mediana de 7 execuções):
+
+| | incremental | sem incremental |
+|---|---:|---:|
+| build limpo | 1.58 s | 1.29 s |
+| mudou 1 linha, 1 arquivo | 0.52 s | 1.29 s |
+| tamanho de `target/` | 35 MB | 60 KB |
+
+O que isso mostra:
+
+1. **O custo cresce com o número de funções, não com a dificuldade delas.** As funções são triviais e cada uma passa por umas 25 consultas. Cada consulta paga um custo fixo (nó no grafo de dependências, hash do resultado), mesmo quando não tem nada a checar.
+2. **O incremental custa 22% no build limpo e poupa 60% quando muda uma linha.** Na máquina de desenvolvimento vale a pena. No CI, que sempre compila do zero, `CARGO_INCREMENTAL=0` corta perto de um quinto do `cargo check` e não grava 35 MB de cache.
+3. **Mesmo com o incremental, uma linha mudada custa 40% do build inteiro** (0,52 contra 1,29 s), enquanto o C recompila só o arquivo. Hipótese não verificada: expansão, leitura dos arquivos e resolução de nomes refazem o crate inteiro, e o grafo de 515 mil nós precisa ser carregado e conferido. Próximo passo: perfil do rebuild incremental.
+4. **Candidato a otimização no rustc: `check_coroutine_obligations`.** Desde [rust-lang/rust#152327](https://github.com/rust-lang/rust/pull/152327) (fev/2026), o `mir_borrowck` a chama em toda função; antes ela só rodava para coroutines (`async`). A função ([check.rs](https://github.com/rust-lang/rust/blob/main/compiler/rustc_hir_analysis/src/check/check.rs)) monta um contexto de inferência antes de olhar a lista de predicados pendentes, que é vazia em qualquer função sem `async`. Um retorno antecipado com a lista vazia parece equivalente: sem obrigação não há erro nem tipo opaco a conferir. Não foi testado com a suíte do rustc. O ganho é pequeno (0,8% do perfil neste cenário), mas a mudança é de poucas linhas e um primeiro PR barato. `check_transmutes` já percorre uma lista vazia sem custo; o que pesa nela é só a consulta existir.
+
 ## Próximos passos
 
 - Rodar de novo numa máquina parada, para separar sinal de ruído (principalmente os linkers).
-- Quebrar o `cargo check` por fase (`-Zself-profile`, `-Ztime-passes`) para ver onde vão as 10,8 bilhões de instruções num programa trivial.
+- Refazer a primeira rodada com a edição em um arquivo só.
+- Perfil (`-Zself-profile`) do rebuild incremental, para ver onde vão os 0,52 s de uma linha mudada.
 - Repetir os dois cenários numa máquina parada, com tempo de relógio confiável.
 - Cenário com genéricos e traits, onde a monomorfização pesa.
 
