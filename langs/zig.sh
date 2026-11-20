@@ -15,7 +15,7 @@ zig_gen() {
   for ((j = 0; j < m; j++)); do
     {
       for ((i = 0; i < f; i++)); do
-        echo "fn f$i(x: u64) u64 {"
+        echo "fn f_$i(x: u64) u64 {"
         echo "    var a = x ^ $((i * 7 + j));"
         echo "    a = a *% 6364136223846793005 +% $i;"
         ((i == 0)) && echo "    a = a +% 7; // EDIT"
@@ -25,7 +25,7 @@ zig_gen() {
       done
       echo "pub fn run(x: u64) u64 {"
       echo "    var a = x;"
-      for ((i = 0; i < f; i++)); do echo "    a = f$i(a);"; done
+      for ((i = 0; i < f; i++)); do echo "    a = f_$i(a);"; done
       echo "    return a;"
       echo "}"
     } > "$d/m$j.zig"
