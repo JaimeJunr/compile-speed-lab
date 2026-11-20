@@ -38,6 +38,7 @@ Jai ficou de fora: o compilador não é distribuído publicamente.
 ```bash
 ./lab.sh variants          # o que está instalado nesta máquina
 ./lab.sh gen 50 200        # 50 módulos x 200 funções = 10 mil funções por linguagem
+./lab.sh gen-multi 50 200  # 50 unidades de compilação dependendo de uma base
 ./lab.sh verify 50x200     # todas imprimem o mesmo número?
 ./lab.sh run 50x200        # mede tudo; ou: ./lab.sh run 50x200 go rust-llvm rust-cranelift
 ./lab.sh report 2026-11-20-<host>-50x200
@@ -73,11 +74,35 @@ O que esta rodada sugere (hipóteses, não conclusões):
 3. **Num pacote único gigante, o Go não é mais rápido que o Rust.** O `go build` sempre otimiza; a vantagem dele deve aparecer com vários pacotes, que ainda não estão medidos.
 4. **O linker não decide este cenário.** O binário é pequeno e a diferença entre lld, mold e wild ficou dentro do ruído.
 
+## Cenário com várias unidades (2026-11-20)
+
+`./lab.sh gen-multi 50 200`: 50 unidades de compilação com 200 funções cada (crates no Rust, pacotes no Go, arquivos no C, units no Pascal). `m0` é a base e as outras 49 dependem dela. "Mudou a base" troca um número dentro de uma função privada de `m0`, sem mexer na interface: é o caso que o [Relink-Don't-Rebuild](https://github.com/rust-lang/goals/issues/843) quer resolver no Rust. "Mudou a folha" faz o mesmo na última unidade, da qual ninguém depende.
+
+O tempo de relógio desta rodada não serve: a máquina estava com outras cargas e o build limpo do `rust-cranelift` foi de 12,8 s a 19,6 s. A tabela usa instruções de CPU (`METRIC=instructions ./lab.sh report ...`), que medem o trabalho feito e não dependem da carga. Dados brutos em [`results/2026-11-20-jaime-setup-multi-50x200`](results/2026-11-20-jaime-setup-multi-50x200).
+
+| variante | limpo (bi) | sem mudança (bi) | mudou a base (bi) | mudou a folha (bi) | RAM pico, limpo (MiB) |
+|---|---:|---:|---:|---:|---:|
+| go | 23.69 | 0.26 | 23.59 | 1.67 | 99 |
+| rust-llvm | 22.46 | 0.13 | 5.90 | 0.63 | 137 |
+| rust-llvm-wild | 22.53 | 0.13 | 5.97 | 0.70 | 138 |
+| rust-cranelift | 21.18 | 0.13 | 6.55 | 0.66 | 146 |
+| rust-check | 12.16 | 0.13 | 4.51 | 0.28 | 105 |
+| c-clang | 10.58 | 0.03 | 0.36 | 0.36 | 89 |
+| c-tcc | 0.68 | 0.03 | 0.07 | 0.07 | 7 |
+| pascal | 8.65 | 0.54 | 0.70 | 0.71 | 55 |
+
+O que esta rodada sugere:
+
+1. **O Go recompila todos os dependentes quando o corpo de uma função da base muda.** Conferido com `go build -v`: depois da edição na base ele recompila `m0` e todas as unidades que dependem dela. Causa não verificada; a suspeita é o inlining, já que o Go exporta o corpo de funções pequenas para os outros pacotes. Próximo teste: a mesma edição numa função marcada `//go:noinline`.
+2. **O incremental do Rust faz a mudança na base custar 4 vezes menos que o build limpo** (5,9 contra 22,5 bilhões), mas ainda 16 vezes mais que no C, que recompila só o arquivo mudado (0,36 bilhão).
+3. **Isso dá um número para o ganho do Relink-Don't-Rebuild neste cenário.** Se o Rust só religasse os dependentes, a mudança na base deveria custar perto da mudança na folha (0,63 bilhão): cerca de 9 vezes menos que hoje. O roadmap oficial fala em 5 a 10 vezes.
+4. **Mesmo aqui, a maior parte é análise.** Na mudança da base, o `cargo check` sozinho gasta 4,5 dos 5,9 bilhões.
+
 ## Próximos passos
 
 - Rodar de novo numa máquina parada, para separar sinal de ruído (principalmente os linkers).
 - Quebrar o `cargo check` por fase (`-Zself-profile`, `-Ztime-passes`) para ver onde vão as 10,8 bilhões de instruções num programa trivial.
-- Cenário com várias unidades: workspace de crates no Rust, pacotes no Go, arquivos no C, com uma mudança numa unidade de baixo.
+- Repetir os dois cenários numa máquina parada, com tempo de relógio confiável.
 - Cenário com genéricos e traits, onde a monomorfização pesa.
 
 ## Limites conhecidos

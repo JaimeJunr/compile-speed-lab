@@ -137,24 +137,27 @@ median_of() {
     | if length == 0 then "-" else .[(length / 2 | floor)] end' "$1"
 }
 
-# Instruções de CPU variam bem menos que o tempo de relógio numa máquina com outras cargas.
+# Instruções de CPU variam bem menos que o tempo de relógio numa máquina com outras cargas:
+# METRIC=instructions troca as colunas de cenário de segundos para bilhões de instruções.
 cmd_report() {
   local dir=${1:?pasta de resultado} v s f scenarios=(clean noop incr) leaf_col="" incr_col="mudou 1 linha"
+  local key=time_wall_clock unit=s div=1
+  if [ "${METRIC:-time}" = instructions ]; then key=instructions unit=bi div=1000000000; fi
   [ -d "$dir" ] || dir="$LAB/results/$dir"
   if compgen -G "$dir/*-leaf.json" >/dev/null; then
     scenarios+=(leaf)
-    leaf_col=" mudou a folha (s) |"
+    leaf_col=" mudou a folha ($unit) |"
     incr_col="mudou a base"
   fi
-  echo "| variante | limpo (s) | sem mudança (s) | $incr_col (s) |$leaf_col RAM pico, limpo (MiB) | instruções, limpo (bi) |"
+  echo "| variante | limpo ($unit) | sem mudança ($unit) | $incr_col ($unit) |$leaf_col RAM pico, limpo (MiB) | instruções, limpo (bi) |"
   echo "|---|---:|---:|---:|${leaf_col:+---:|}---:|---:|"
   for v in "${ALL_VARIANTS[@]}"; do
     # Variante ainda rodando deixa o JSON pela metade: pula até ele ficar válido.
     jq -e . "$dir/$v-incr.json" >/dev/null 2>&1 || continue
     printf '| %s' "$v"
     for s in "${scenarios[@]}"; do
-      f=$(median_of "$dir/$v-$s.json" time_wall_clock)
-      LC_NUMERIC=C printf ' | %.2f' "$f"
+      f=$(median_of "$dir/$v-$s.json" "$key")
+      LC_NUMERIC=C printf ' | %.2f' "$(echo "$f / $div" | bc -l)"
     done
     f=$(median_of "$dir/$v-clean.json" memory_peak_resident)
     LC_NUMERIC=C printf ' | %.0f' "$(echo "$f / 1048576" | bc -l)"
