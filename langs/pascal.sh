@@ -44,8 +44,6 @@ pascal_gen() {
   done
 }
 
-pascal_edit_file() { echo "$1/m0.pas"; }
-pascal_bin() { echo "$1/bin"; }
 pascal_clean() { rm -rf "$1/units"/* "$1/bin"; }
 pascal_build() { (cd "$1" && fpc -v0 -O- -g -FUunits -obin main.pas >/dev/null); }
 pascal_version() { echo "fpc $(fpc -iV)"; }
