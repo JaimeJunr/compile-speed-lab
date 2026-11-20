@@ -136,6 +136,37 @@ O que isso mostra:
 3. **Mesmo com o incremental, uma linha mudada custa 40% do build inteiro** (0,52 contra 1,29 s), enquanto o C recompila só o arquivo. Hipótese não verificada: expansão, leitura dos arquivos e resolução de nomes refazem o crate inteiro, e o grafo de 515 mil nós precisa ser carregado e conferido. Próximo passo: perfil do rebuild incremental.
 4. **Candidato a otimização no rustc: `check_coroutine_obligations`.** Desde [rust-lang/rust#152327](https://github.com/rust-lang/rust/pull/152327) (fev/2026), o `mir_borrowck` a chama em toda função; antes ela só rodava para coroutines (`async`). A função ([check.rs](https://github.com/rust-lang/rust/blob/main/compiler/rustc_hir_analysis/src/check/check.rs)) monta um contexto de inferência antes de olhar a lista de predicados pendentes, que é vazia em qualquer função sem `async`. Um retorno antecipado com a lista vazia parece equivalente: sem obrigação não há erro nem tipo opaco a conferir. Não foi testado com a suíte do rustc. O ganho é pequeno (0,8% do perfil neste cenário), mas a mudança é de poucas linhas e um primeiro PR barato. `check_transmutes` já percorre uma lista vazia sem custo; o que pesa nela é só a consulta existir.
 
+## Projetos reais (2026-11-20)
+
+Medido em clones de projetos de verdade, no ciclo "mudei uma função, recompila os testes" (`cargo test --no-run`), cinco execuções cada, na fila `heavy-run` com outras cargas na máquina.
+
+**Debuginfo, no Sussurro** (um crate, dependências pesadas). Dados em [`results/2026-11-20-jaime-setup-sussurro-debuginfo`](results/2026-11-20-jaime-setup-sussurro-debuginfo).
+
+| | debug completo (padrão) | `line-tables-only`, dependências sem debug |
+|---|---:|---:|
+| tempo (mediana) | 5.35 s | 1.69 s |
+| instruções | 8.8 bi | 4.2 bi |
+| RAM pico | 1.2 GiB | 0.48 GiB |
+| `target/` | 3.0 GB | 1.5 GB |
+
+O build de dev padrão gera debuginfo completo do projeto e de todas as dependências, e escrever e ligar isso custa metade do ciclo. Com `line-tables-only` o backtrace continua com arquivo e linha; o que se perde é inspecionar variáveis no depurador. Para isso, um perfil separado com `debug = true`.
+
+```toml
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+```
+
+**Linker, no serverust** (13 crates, 61 binários de teste). Dados em [`results/2026-11-20-jaime-setup-serverust-linker`](results/2026-11-20-jaime-setup-serverust-linker). O wild não ganhou do lld, o padrão desde o Rust 1.90: mediana de 17,6 s contra 17,9 s, dentro do ruído de ±3 s, e 11% mais instruções. Neste ciclo o tempo vai em recompilar os dependentes, não em ligar.
+
+## Doctor
+
+`./doctor.py <projeto>...` lê `Cargo.toml`, `.cargo/config.toml`, `rust-toolchain` e os workflows do GitHub Actions e aponta o que deixa o build lento: CI com incremental ligado ou sem cache, debuginfo completo no dev, toolchain anterior ao lld padrão e crate grande demais. Cada item diz de onde vem a recomendação: medição deste laboratório ou documentação. Só lê arquivos. Os testes ficam em `tests/test_doctor.py` (`python3 -m unittest tests/test_doctor.py`).
+
+Uma armadilha que o doctor evita: `[profile]` em `.cargo/config.toml`, inclusive o global em `~/.cargo/config.toml`, vence o do `Cargo.toml`. Por isso o ajuste de debuginfo vai no `Cargo.toml` de cada projeto, e não na config da máquina, onde passaria por cima de escolhas feitas de propósito.
+
 ## Próximos passos
 
 - Rodar de novo numa máquina parada, para separar sinal de ruído (principalmente os linkers).
