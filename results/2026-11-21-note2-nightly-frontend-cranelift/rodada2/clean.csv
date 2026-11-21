@@ -1,0 +1,13 @@
+project,metric,cfg,run,seconds,maxrss_kb,rc
+serverust,build,fe2,1,71.05,1100676,0
+serverust,build,cl2,1,65.76,1083468,0
+serverust,build,fe2,2,70.86,1112900,0
+serverust,build,cl2,2,66.19,1085172,0
+serverust,build,fe2,3,72.02,1112924,0
+serverust,build,cl2,3,69.47,1088576,0
+switchyard,build,fe2,1,62.81,644728,0
+switchyard,build,cl2,1,55.69,609336,0
+switchyard,build,fe2,2,64.75,643048,0
+switchyard,build,cl2,2,57.59,610948,0
+switchyard,build,fe2,3,63.55,644852,0
+switchyard,build,cl2,3,58.53,605488,0

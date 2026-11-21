@@ -161,6 +161,14 @@ debug = false
 
 **Linker, no serverust** (13 crates, 61 binários de teste). Dados em [`results/2026-11-20-jaime-setup-serverust-linker`](results/2026-11-20-jaime-setup-serverust-linker). O wild não ganhou do lld, o padrão desde o Rust 1.90: mediana de 17,6 s contra 17,9 s, dentro do ruído de ±3 s, e 11% mais instruções. Neste ciclo o tempo vai em recompilar os dependentes, não em ligar.
 
+## Front-end paralelo e Cranelift do nightly (2026-11-21)
+
+Context-engine, serverust e Switchyard na note2 (4 núcleos), `nightly-2026-11-20`, que já liga o front-end paralelo com 2 threads por padrão. Dados e método em [`results/2026-11-21-note2-nightly-frontend-cranelift`](results/2026-11-21-note2-nightly-frontend-cranelift).
+
+- **Em 4 núcleos, o front-end paralelo deixa o build do zero de 8% a 12% mais lento** com 2 threads, e o check até 7%, com até 7% mais RAM. No rebuild de uma linha, não muda nada.
+- **O Cranelift encurta o build do zero de 3% a 10%**, mais quanto maior o projeto, e não encurta o rebuild de uma linha.
+- **O Cranelift quebra o link com `aws-lc-rs` anterior a 1.18.2** (dependência comum do `rustls`): o serverust e o Switchyard só rodaram depois de `cargo update -p aws-lc-rs`.
+
 ## Doctor
 
 `./doctor.py <projeto>...` lê `Cargo.toml`, `.cargo/config.toml`, `rust-toolchain` e os workflows do GitHub Actions e aponta o que deixa o build lento: CI com incremental ligado ou sem cache, debuginfo completo no dev, toolchain anterior ao lld padrão e crate grande demais. Cada item diz de onde vem a recomendação: medição deste laboratório ou documentação. Só lê arquivos. Os testes ficam em `tests/test_doctor.py` (`python3 -m unittest tests/test_doctor.py`).
@@ -190,9 +198,10 @@ Deixar o ciclo de compilação dos projetos Rust o mais perto possível de Go, P
 
 ### Próximos passos
 
-- Aplicar o debuginfo reduzido nos projetos que o doctor aponta. O Sussurro está em andamento; Switchyard, jira-hours, wasm-server-rust, homestead-kitchen e os projetos da empresa ainda não começaram.
+- Aplicar o debuginfo reduzido nos projetos que o doctor aponta. O Sussurro já tem ([JaimeJunr/Sussurro#17](https://github.com/JaimeJunr/Sussurro/pull/17), mergeado em 2026-11-21); Switchyard, jira-hours, wasm-server-rust, homestead-kitchen e os projetos da empresa ainda não começaram.
 - Refazer a primeira rodada com a edição em um arquivo só, numa máquina parada.
-- Perfil (`-Zself-profile`) do rebuild incremental, para ver onde vão os 0,52 s de uma linha mudada.
+- Perfil (`-Zself-profile`) do rebuild incremental, para ver onde vão os 0,52 s de uma linha mudada no cenário sintético e os 0,8 a 2,5 s nos projetos reais, onde nem o front-end paralelo nem o Cranelift ajudam.
+- Repetir a medição do front-end paralelo e do Cranelift com 16 núcleos, antes de mudar o `cargo dev`, e mandar os números de 4 e de 16 núcleos ao time do compilador.
 - Testar no Go a edição numa função `//go:noinline`, para confirmar se o inlining é o que faz ele recompilar os dependentes.
 - Cenário com genéricos e traits, onde a monomorfização pesa.
 - Abrir no rustc o PR do retorno antecipado em `check_coroutine_obligations`, com a suíte do compilador.
