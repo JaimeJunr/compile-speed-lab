@@ -161,19 +161,52 @@ debug = false
 
 **Linker, no serverust** (13 crates, 61 binários de teste). Dados em [`results/2026-11-20-jaime-setup-serverust-linker`](results/2026-11-20-jaime-setup-serverust-linker). O wild não ganhou do lld, o padrão desde o Rust 1.90: mediana de 17,6 s contra 17,9 s, dentro do ruído de ±3 s, e 11% mais instruções. Neste ciclo o tempo vai em recompilar os dependentes, não em ligar.
 
+## Front-end paralelo e Cranelift do nightly (2026-11-21)
+
+Context-engine, serverust e Switchyard na note2 (processo preso a 4 das 8 threads, `-j4`), `nightly-2026-11-20`, que já liga o front-end paralelo com 2 threads por padrão. Dados e método em [`results/2026-11-21-note2-nightly-frontend-cranelift`](results/2026-11-21-note2-nightly-frontend-cranelift).
+
+- **Com 4 CPUs, o front-end paralelo deixou o build do zero de 8% a 12% mais lento** com 2 threads, e o check até 7%, com até 7% mais RAM. No rebuild de uma linha, não muda nada.
+- **O Cranelift encurta o build do zero de 3% a 10%**, mais quanto maior o projeto, e não encurta o rebuild de uma linha.
+- **O Cranelift quebra o link com `aws-lc-rs` anterior a 1.18.2** (dependência comum do `rustls`): o serverust e o Switchyard só rodaram depois de `cargo update -p aws-lc-rs`.
+
 ## Doctor
 
 `./doctor.py <projeto>...` lê `Cargo.toml`, `.cargo/config.toml`, `rust-toolchain` e os workflows do GitHub Actions e aponta o que deixa o build lento: CI com incremental ligado ou sem cache, debuginfo completo no dev, toolchain anterior ao lld padrão e crate grande demais. Cada item diz de onde vem a recomendação: medição deste laboratório ou documentação. Só lê arquivos. Os testes ficam em `tests/test_doctor.py` (`python3 -m unittest tests/test_doctor.py`).
 
 Uma armadilha que o doctor evita: `[profile]` em `.cargo/config.toml`, inclusive o global em `~/.cargo/config.toml`, vence o do `Cargo.toml`. Por isso o ajuste de debuginfo vai no `Cargo.toml` de cada projeto, e não na config da máquina, onde passaria por cima de escolhas feitas de propósito.
 
-## Próximos passos
+## Objetivo e frentes
 
-- Rodar de novo numa máquina parada, para separar sinal de ruído (principalmente os linkers).
-- Refazer a primeira rodada com a edição em um arquivo só.
-- Perfil (`-Zself-profile`) do rebuild incremental, para ver onde vão os 0,52 s de uma linha mudada.
-- Repetir os dois cenários numa máquina parada, com tempo de relógio confiável.
+Deixar o ciclo de compilação dos projetos Rust o mais perto possível de Go, Pascal e C, sem trocar de linguagem. São três frentes, que se alimentam:
+
+1. **Medir** (este laboratório): o mesmo programa em várias linguagens e técnicas, e medições em clones de projetos reais. Cada técnica nova da comunidade vira uma coluna.
+2. **Aplicar** (o doctor): o que a medição prova vira checagem, e o doctor aponta em cada projeto o que falta. Uma recomendação só entra com evidência: medição daqui ou documentação citada.
+3. **Contribuir com o Rust**: levar ao compilador e às ferramentas o que as medições mostram. Primeiro candidato: o retorno antecipado em `check_coroutine_obligations`.
+
+### O que já existe
+
+- [cargo-wizard](https://github.com/kobzol/cargo-wizard), de Jakub Beránek (Kobzol), que trabalha no desempenho do compilador. **Aplica** modelos de perfil (compilação rápida, binário rápido, binário pequeno) por um diálogo ou com `cargo wizard apply`. Não audita o CI, não compara projetos nem traz medição. Ativo: v0.2.3 em 2026-04.
+- [cargo-kit](https://docs.rs/crate/cargo-kit): aplica modelos parecidos, com bem menos uso.
+- O doctor ocupa o espaço que esses dois deixam: só lê, olha CI e toolchain além do perfil, roda em vários projetos de uma vez e diz de onde vem cada recomendação. Um caminho natural é propor ao cargo-wizard um modo de auditoria (`cargo wizard check`), em vez de manter uma ferramenta paralela.
+
+### Decisões
+
+- **O linker fica no padrão (lld).** No serverust o wild não ganhou: 17,6 contra 17,9 s, dentro do ruído, com 11% mais instruções.
+- **O debuginfo é ajustado em cada `Cargo.toml`, não em `~/.cargo/config.toml`.** O `[profile]` da config vence o do manifesto e passaria por cima de escolhas feitas de propósito.
+- **No CI, o `Swatinem/rust-cache` já desliga o incremental.** Não é preciso `CARGO_INCREMENTAL=0` à parte quando ele está presente.
+- **A config global da máquina continua com sccache.** O Cranelift fica opcional pelo `cargo dev` (`~/.local/bin/cargo-dev`), que precisa de nightly.
+
+### Próximos passos
+
+- Aplicar o debuginfo reduzido nos projetos que o doctor aponta. O Sussurro já tem ([JaimeJunr/Sussurro#17](https://github.com/JaimeJunr/Sussurro/pull/17), mergeado em 2026-11-21); Switchyard, jira-hours, wasm-server-rust, homestead-kitchen e os projetos da empresa ainda não começaram.
+- Refazer a primeira rodada com a edição em um arquivo só, numa máquina parada.
+- Perfil (`-Zself-profile`) do rebuild incremental, para ver onde vão os 0,52 s de uma linha mudada no cenário sintético e os 0,8 a 2,5 s nos projetos reais, onde nem o front-end paralelo nem o Cranelift ajudam.
+- Repetir a medição do front-end paralelo e do Cranelift com 16 núcleos, antes de mudar o `cargo dev`, e mandar os números de 4 CPUs e da máquina inteira ao time do compilador.
+- Testar no Go a edição numa função `//go:noinline`, para confirmar se o inlining é o que faz ele recompilar os dependentes.
 - Cenário com genéricos e traits, onde a monomorfização pesa.
+- Abrir no rustc o PR do retorno antecipado em `check_coroutine_obligations`, com a suíte do compilador.
+- Propor o modo de auditoria ao cargo-wizard, levando as checagens e a evidência do doctor.
+- Um modelo de projeto novo (camada 2) já com o perfil de dev ajustado, ou adotar um modelo pronto se existir.
 
 ## Limites conhecidos
 

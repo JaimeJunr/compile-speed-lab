@@ -1,0 +1,4 @@
+    Updating crates.io index
+     Locking 2 packages to highest Rust 1.96.1 compatible versions
+    Updating aws-lc-rs v1.17.1 -> v1.19.0
+    Updating aws-lc-sys v0.42.0 -> v0.47.0
