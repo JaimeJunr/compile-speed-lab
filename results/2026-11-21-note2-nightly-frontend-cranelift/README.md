@@ -1,12 +1,15 @@
 # Front-end paralelo e Cranelift do nightly em três projetos reais (note2, 2026-11-21)
 
-Medido em 2026-11-21 na note2: Intel i5-1135G7, 4 núcleos, máquina parada, sem sccache.
+Medido em 2026-11-21 na note2: Intel i5-1135G7 (4 núcleos, 8 threads), com carga baixa no início, sem
+sccache. **O processo estava preso às CPUs 0-3** (uma thread por núcleo; as irmãs do SMT fora), rodava com
+`nice -n 10` e com teto de RAM do `frota rodar`. O `cargo` usou `-j4`, e não o `-j8` que um usuário comum
+teria nesse notebook: os números valem para 4 CPUs, não para o notebook inteiro.
 Toolchain `rustc 1.102.0-nightly (c7d5ba59d 2026-11-20)`, LLVM 23.1.6 (`rodada1/env.txt`).
 
 Desde `nightly-2026-11-14` o front-end paralelo vem ligado por padrão com 2 threads
 ([anúncio](https://blog.rust-lang.org/2026/11/16/enabling-parallel-frontend-on-nightly/)), e o time
 pede relatos de uso real. Este teste mede esse padrão contra o front-end sequencial e contra 4 threads,
-e o back-end Cranelift, numa máquina do tamanho de um runner padrão de CI.
+e o back-end Cranelift, com 4 CPUs.
 
 ## Projetos e configurações
 
@@ -49,10 +52,12 @@ Cranelift (rodada 1 para o context-engine, rodada 2 para os outros):
 | build do zero, LLVM 2 threads → Cranelift | 36,9 → 35,9 s (−3%) | 71,3 → 67,1 s (−6%) | 63,7 → 57,3 s (−10%) |
 | rebuild de uma linha, LLVM → Cranelift | 1,07 → 1,05 s | 0,85 → 0,83 s | 2,46 → 2,44 s |
 
-1. **Em 4 núcleos, o padrão novo do nightly deixa o build do zero mais lento.** Com 2 threads, o build
+1. **Preso a 4 CPUs, o padrão novo do nightly deixou o build do zero mais lento.** Com 2 threads, o build
    ficou de 8% a 12% mais lento nos três projetos, e o check de 0% a 7%. Com 4 threads, o build ficou de
-   6% a 8% mais lento. O pico de RAM sobe até 7%. Uma primeira rodada, cujos arquivos brutos se perderam numa sincronização,
-   deu o mesmo sentido (por exemplo, check do context-engine 23,8 → 26,4 s).
+   6% a 8% mais lento. O pico de RAM sobe até 7%. No Switchyard, os
+   intervalos do build se sobrepõem (56-65 s sequencial, 64-71 s com 2 threads). Uma primeira rodada, cujos
+   arquivos brutos se perderam numa sincronização, deu o mesmo sentido no build, mas não em todo o check: no
+   serverust, o check tinha piorado 4% e 9%, e aqui ficou igual.
 2. **No rebuild de uma linha, o front-end paralelo não muda nada.** As diferenças ficam abaixo de 4%,
    dentro do ruído. É o ciclo em que o anúncio também espera pouco (3 a 5%).
 3. **O Cranelift só ajuda no build do zero.** Ganha de 3% a 10%, mais nos projetos com mais código, e
@@ -72,13 +77,15 @@ os 0,8 a 2,5 s; o próximo passo é o `-Zself-profile` desse rebuild.
 ## Armadilha de método
 
 Sem o `sync` antes de cada medida, o rebuild do Switchyard oscilava entre 2,4 e 6 s com o mesmo tempo de
-CPU (cerca de 4,8 s): a gravação pendente do `target/` de 1,3 GB caía dentro da medida. Nessa versão,
+CPU (cerca de 4,8 s): provavelmente a gravação pendente do `target/` de 1,3 GB caía dentro da medida. Nessa versão,
 4 threads pareciam 46% mais rápidas que o sequencial; com o `sync`, a diferença sumiu.
 
 ## Limites
 
-- Só 4 núcleos. Numa máquina de 8 ou 16 núcleos, o resultado pode virar, e é preciso medir antes de
+- Só 4 CPUs (ver o topo). Com 8 ou 16, o resultado pode virar, e é preciso medir antes de
   mudar o `cargo dev` (que usa 4 threads e Cranelift).
+- Do zero, a ordem das configurações foi fixa em cada rodada (`fe1`, `fe2`, `fe4`) e sem `sync` antes de
+  cada medida; o efeito da ordem e da escrita pendente não foi medido.
 - Três rodadas do zero por configuração; os intervalos estão em `rodada1/clean.csv` e são de 1 a 6 s.
 - `du.txt` traz o tamanho do `target/` por configuração: o front-end não muda nada; com Cranelift, o do
   context-engine fica um pouco maior (598 contra 576 MB).
